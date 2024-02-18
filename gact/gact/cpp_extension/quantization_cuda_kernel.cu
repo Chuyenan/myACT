@@ -3,7 +3,7 @@
  */
 
 #include <torch/extension.h>
-#include <ATen/CUDAGeneratorImpl.h>
+#include <ATen/cuda/CUDAGeneratorImpl.h>
 #include <THC/THCAtomics.cuh>
 
 #include <cuda.h>
