@@ -1,6 +1,6 @@
 import torch
 from gact.conf import config
-from gact.ops import op_quantize, op_dequantize, op_quantize_mask, op_dequantize_mask, op_dequantize_cvbn, op_quantize_cvbn
+from gact.ops import op_quantize, op_dequantize, op_quantize_mask, op_dequantize_mask
 from gact.utils import uniform_sample, compute_tensor_bytes
 
 
@@ -120,11 +120,8 @@ class Quantizer:
             else:
                 bit = self.bits[tid]
             # quantize
-            if input.dim() == 4:
-                q_inputs = op_quantize_cvbn(input, bit, self.seeds[tid] + self.seed_iter)
-            else:
-                q_inputs = op_quantize(input, bit, self.seeds[tid] + self.seed_iter)
-            # q_inputs = op_quantize(input, bit, self.seeds[tid] + self.seed_iter)
+            q_inputs = op_quantize(
+                input, bit, self.seeds[tid] + self.seed_iter)
             if self.swap:
                 #  with torch.cuda.stream(self.swap_out_stream):
                 # self.swap_out_stream.wait_stream(self.compute_stream)
@@ -148,6 +145,7 @@ class Quantizer:
         quantized = input[0]
         if not quantized:
             return input[1]
+
         is_dropout_mask = input[1]
         if is_dropout_mask:
             _, is_dropout_mask, q_inputs = input
@@ -183,12 +181,8 @@ class Quantizer:
                                 non_blocking=True
                             )
                     self.end_prefetch_event.record()
-                    
-        if len(input_shape) == 4:
-            ret = op_dequantize_cvbn(q_inputs, input_shape)
-        else:
-            ret = op_dequantize(q_inputs, input_shape)
-        # ret = op_dequantize(q_inputs, input_shape)
+
+        ret = op_dequantize(q_inputs, input_shape)
 
         ref_cnt -= 1
         if ref_cnt < 0:
