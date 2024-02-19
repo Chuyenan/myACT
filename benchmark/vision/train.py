@@ -138,30 +138,50 @@ def main_worker(args):
         if args.arch in ['inception_v3']:
             input_size = 299
         else:
-            input_size = 224
+            # input_size = 224
+            input_size = 32
     else:
         input_size = args.input_size
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(input_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
-
-    train_sampler = None
+    # train_dataset = datasets.ImageFolder(
+    #     traindir,
+    #     transforms.Compose([
+    #         transforms.RandomResizedCrop(input_size),
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ]))
+    #
+    # train_sampler = None
+    #
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=args.batch_size, shuffle=(
+    #         train_sampler is None),
+    #     num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+    #
+    # val_loader = torch.utils.data.DataLoader(
+    #     datasets.ImageFolder(valdir, transforms.Compose([
+    #         transforms.Resize(input_size),
+    #         transforms.CenterCrop(input_size),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ])),
+    #     batch_size=args.batch_size, shuffle=False,
+    #     num_workers=args.workers, pin_memory=True)
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(
-            train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+        datasets.CIFAR10(root='/root/autodl-tmp/', train=True, transform=transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4),
+            transforms.ToTensor(),
+            normalize,
+        ]), download=True),
+        batch_size=args.batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=True)
 
+    # 验证数据的loader
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(input_size),
-            transforms.CenterCrop(input_size),
+        datasets.CIFAR10(root='/root/autodl-tmp/', train=False, transform=transforms.Compose([
             transforms.ToTensor(),
             normalize,
         ])),
@@ -304,7 +324,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         with torch.no_grad():
             optimizer.step()
         
-        if i % args.print_freq == 0:
+        # if i % args.print_freq == 0:
+        if i % 1 == 0:
             progress.display(i)
         
         # measure elapsed time
@@ -377,6 +398,7 @@ def validate(val_loader, model, criterion, args):
                 target = target.cuda(args.gpu, non_blocking=True)
 
             # compute output
+            images = images.cuda(args.gpu, non_blocking=True)
             output = model(images)
             loss = criterion(output, target)
 
