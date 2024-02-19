@@ -1,0 +1,5 @@
+{"network": "resnet50", "algorithm": "L0", "model_only": 0.1, "data_loader": 0.01, "batch_size": 256, "total": 0.73, "activation": 0.42}
+{"network": "resnet50", "algorithm": "L1.1", "model_only": 0.1, "data_loader": 0.01, "batch_size": 256, "total": 0.58, "activation": 0.27}
+{"network": "resnet50", "algorithm": "L2", "model_only": 0.1, "data_loader": 0.01, "batch_size": 256, "total": 0.58, "activation": 0.27}
+{"network": "resnet50", "algorithm": "L2", "model_only": 0.1, "data_loader": 0.01, "batch_size": 256, "total": 0.41, "activation": 0.1}
+{"network": "resnet50", "algorithm": "L1.1", "model_only": 0.1, "data_loader": 0.01, "batch_size": 256, "total": 0.5, "activation": 0.19}
