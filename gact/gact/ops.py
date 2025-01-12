@@ -9,6 +9,17 @@ import gact.cpp_extension.quantization as ext_quantization
 import gact.cpp_extension.minimax as ext_minimax
 from torch.utils.checkpoint import checkpoint
 
+num_hash_functions = 10
+hash_function_length = 16
+
+static_hash_functions = np.random.randint(0, 2, (num_hash_functions, hash_function_length), dtype=np.int32)
+
+def compute_group_hash(group, hash_functions):
+    flat_group = group.flatten().cpu().numpy()
+    hash_values = np.dot(flat_group, hash_functions.T) > 0
+    hash_value = ''.join(map(str, hash_values.astype(int)))
+    return hash_value
+
 @torch.no_grad()
 def no_scheme_quantize_pack(input, q_bit, seed):
     N = (input.numel() + config.group_size - 1) //  config.group_size
@@ -86,7 +97,6 @@ def no_scheme_compute_quantization_bits(input, group_size):
     b = 1
     return input_groups.view(N, -1, group_size), b, mn.view(N, -1, 1), mx.view(N, -1, 1)
 
-@torch.no_grad()
 def cvbn_scheme_quantize_pack(input, q_bit, seed):
     B, C, H, W = input.shape
 
@@ -97,64 +107,85 @@ def cvbn_scheme_quantize_pack(input, q_bit, seed):
     lfc_input = F.avg_pool2d(input, pool_kernel_size, stride=pool_kernel_size, padding=0)
     input_lfc_large = F.upsample_nearest(lfc_input, size=(H, W), scale_factor=None)
     hfc_input = input - input_lfc_large
-    # input_lfc = input_lfc_large
     lfc_shape = lfc_input.shape
     hfc_shape = hfc_input.shape
     
     featuremap_area_lfc = lfc_input.shape[-2:].numel()  # should be n
-    # lfc_drop_idx = lfc_input.view(-1).abs().topk(int(np.prod(lfc_shape) * 0.9), sorted=False)[1]
-    # print(f'111={featuremap_area_lfc}')
     if featuremap_area_lfc > config.group_size:
         group_size = config.group_size
-        input_lfc_groups, q_bits_l, q_min_l, mx_l = no_scheme_compute_quantization_bits(lfc_input, group_size)
-        q_bits_l = 8
-    else:
-        group_size = featuremap_area_lfc
         input_lfc_groups = lfc_input.reshape(B, -1, group_size)
-        # input_lfc_groups = lfc_input.reshape(lfc_input.numel() // group_size, -1, group_size)
-        # print(input_lfc_groups.shape)
         q_bits_l = 8
         q_min_l = input_lfc_groups.min(dim=-1).values.unsqueeze(dim=-1)
         mx_l = input_lfc_groups.max(dim=-1).values.unsqueeze(dim=-1)
-        # group_size = 64
-        # input_lfc_groups, q_bits_l, q_min_l, mx_l = no_scheme_compute_quantization_bits(lfc_input, group_size)
-        # q_bits_l = 8
-        
+    else:
+        group_size = featuremap_area_lfc
+        input_lfc_groups = lfc_input.reshape(B, -1, group_size)
+        q_bits_l = 8
+        q_min_l = input_lfc_groups.min(dim=-1).values.unsqueeze(dim=-1)
+        mx_l = input_lfc_groups.max(dim=-1).values.unsqueeze(dim=-1)
+    
     featuremap_area = hfc_input.shape[-2:].numel()  # should be n
-    # hfc_drop_idx = hfc_input.view(-1).abs().topk(int(np.prod(hfc_shape) * 0.1), sorted=False)[1]
-    # print(f'222={featuremap_area}')
     if featuremap_area > config.group_size:
         group_size = config.group_size
-        input_hfc_groups, q_bits, q_min, mx = no_scheme_compute_quantization_bits(hfc_input, group_size)
+        input_hfc_groups = hfc_input.reshape(B, -1, group_size)
+        q_bits = 2
+        q_min = input_hfc_groups.min(dim=-1).values.unsqueeze(dim=-1)
+        mx = input_hfc_groups.max(dim=-1).values.unsqueeze(dim=-1)
     else:
         group_size = featuremap_area
         input_hfc_groups = hfc_input.reshape(B, -1, group_size)
         q_bits = 2
         q_min = input_hfc_groups.min(dim=-1).values.unsqueeze(dim=-1)
         mx = input_hfc_groups.max(dim=-1).values.unsqueeze(dim=-1)
-        # group_size = config.group_size
-        # input_hfc_groups, q_bits, q_min, mx = no_scheme_compute_quantization_bits(hfc_input, group_size)
 
-    # print(x_hfc.shape, x_hfc_groups.shape, q_bits, q_min.shape, mx.shape)
-    # print(x_hfc.dtype, x_hfc_groups.dtype, q_min.dtype, mx.dtype)
-    # print(x_hfc.device, x_hfc_groups.device)
-    # print(q_bits)
-    lfc_input, q_scale_l = ext_quantization.pack_single_precision(input_lfc_groups, q_min_l, mx_l, q_bits_l, True, seed)
-    hfc_input, q_scale = ext_quantization.pack_single_precision(input_hfc_groups, q_min, mx, q_bits, True, seed)
-    # print(f'========={lfc_input.shape}')
-    # print(f'========={hfc_input.shape}')
-    lfc_numel = lfc_input.numel()
-    hfc_numel = hfc_input.numel()
-    lfc_drop_idx = lfc_input.abs().topk(int(lfc_numel * 0.9), sorted=False)[1]
-    hfc_drop_idx = hfc_input.abs().topk(int(hfc_numel * 0.1), sorted=False)[1]
+    quantized_results = {}
+
+    lfc_packed = []
+    for group in input_lfc_groups:
+        hash_value = compute_group_hash(group, static_hash_functions)
+        if hash_value in quantized_results:
+            lfc_packed.append(quantized_results[hash_value])
+        else:
+            packed, q_scale_l = ext_quantization.pack_single_precision(group.unsqueeze(0), q_min_l, mx_l, q_bits_l, True, seed)
+            quantized_results[hash_value] = packed
+            lfc_packed.append(packed)
+    lfc_packed = torch.cat(lfc_packed, dim=0)
+
+    hfc_packed = []
+    for group in input_hfc_groups:
+        hash_value = compute_group_hash(group, static_hash_functions)
+        if hash_value in quantized_results:
+            hfc_packed.append(quantized_results[hash_value])
+        else:
+            packed, q_scale = ext_quantization.pack_single_precision(group.unsqueeze(0), q_min, mx, q_bits, True, seed)
+            quantized_results[hash_value] = packed
+            hfc_packed.append(packed)
+    hfc_packed = torch.cat(hfc_packed, dim=0)
     
-    lfc_input = lfc_input[lfc_drop_idx]
-    hfc_input = hfc_input[hfc_drop_idx]
-    lfc_drop_idx = lfc_drop_idx.to(torch.int32)
-    hfc_drop_idx = hfc_drop_idx.to(torch.int32)
+    lfc_numel = lfc_packed.numel()
+    hfc_numel = hfc_packed.numel()
     
-    return lfc_input, lfc_shape, lfc_numel, q_scale_l, q_min_l, lfc_drop_idx, hfc_input, hfc_shape, hfc_numel, q_scale, q_min, hfc_drop_idx
-    # return input_lfc, hfc_input, q_scale, q_min
+    if lfc_numel > 0:
+        lfc_topk_k = max(1, int(lfc_numel * 0.9))
+        lfc_flat = lfc_packed.flatten()
+        lfc_drop_idx_flat = lfc_flat.abs().topk(lfc_topk_k, sorted=False)[1]
+        lfc_packed = lfc_flat[lfc_drop_idx_flat].view(-1, lfc_topk_k)
+        lfc_drop_idx = lfc_drop_idx_flat.to(torch.int32)
+    else:
+        lfc_packed = torch.tensor([], dtype=lfc_packed.dtype, device=lfc_packed.device)
+        lfc_drop_idx = torch.tensor([], dtype=torch.int32, device=lfc_packed.device)
+    
+    if hfc_numel > 0:
+        hfc_topk_k = max(1, int(hfc_numel * 0.1))
+        hfc_flat = hfc_packed.flatten()
+        hfc_drop_idx_flat = hfc_flat.abs().topk(hfc_topk_k, sorted=False)[1]
+        hfc_packed = hfc_flat[hfc_drop_idx_flat].view(-1, hfc_topk_k)
+        hfc_drop_idx = hfc_drop_idx_flat.to(torch.int32)
+    else:
+        hfc_packed = torch.tensor([], dtype=hfc_packed.dtype, device=hfc_packed.device)
+        hfc_drop_idx = torch.tensor([], dtype=torch.int32, device=hfc_packed.device)
+    
+    return lfc_packed, lfc_shape, lfc_numel, q_scale_l, q_min_l, lfc_drop_idx, hfc_packed, hfc_shape, hfc_numel, q_scale, q_min, hfc_drop_idx
 
 def op_quantize_cvbn(input, q_bit, seed):
     # input_lfc, hfc_input, q_scale, q_min = cvbn_scheme_quantize_pack(input, q_bit, seed)

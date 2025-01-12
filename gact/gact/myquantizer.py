@@ -2,6 +2,9 @@ import torch
 from gact.conf import config
 from gact.ops import op_quantize, op_dequantize, op_quantize_mask, op_dequantize_mask
 from gact.utils import uniform_sample, compute_tensor_bytes
+from datasketch import MinHash, MinHashLSH
+
+import numpy as np
 
 
 class Quantizer:
@@ -37,6 +40,10 @@ class Quantizer:
         self.iter = 0  # total number of iterations, including the extra inter for auto precision
         # iteration for seed, share the same seed_iter for the same auto precision adaptive step
         self.seed_iter = 0
+
+        # 静态存储哈希函数集
+        self.hash_functions = None
+        self.num_perm = config.num_perm
 
     def filter_tensors(self, pairs):
         for _, v in pairs:
@@ -82,15 +89,24 @@ class Quantizer:
         self.start_bwd = True
         self.iter += 1
 
+    # tensor之间的局部敏感哈希
     def generate_tensor_key(self, t, tid):
         if config.check_dup:
-            # sample 100 elements data pointer + tensor.sum() as the key
-            sample_cnt = min(100, t.numel())
-            key = uniform_sample(t, sample_cnt, add_dataptr=True)
-            key.append(t.sum().item())
-            return tuple(key)
+            # 初始化哈希函数集
+            if self.hash_functions is None or self.hash_functions.shape[0] < self.num_perm:
+                self.hash_functions = np.random.randn(self.num_perm, t.numel())
+            
+            # 将张量展平
+            tensor_flat = t.cpu().numpy().flatten()
+            
+            # 计算点积并生成二进制哈希序列
+            hash_values = np.dot(self.hash_functions, tensor_flat) > 0
+            
+            # 将二进制哈希序列转换为整数
+            key = ''.join(map(str, hash_values.astype(int)))
+            return key
         else:
-            return (tid)
+            return str(tid)
 
     def quantize(self, input):
         quantize, is_dropout_mask = self.check_quantize(input)

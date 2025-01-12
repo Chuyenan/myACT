@@ -52,6 +52,8 @@ class QuantizationConfig:
         # please reach out to xiaoxuan_liu@berkeley.edu if you meet bugs after setting this field to True
         self.check_dup = False
 
+        self.num_perm = 24
+
         # ================== auto precision ================== 
         self.auto_prec = False  # if auto precision is turned on
         # max number of bits for quantization, this field is only used for auto precision
